@@ -1,0 +1,673 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for all resources."
+      }
+    },
+    "resourcePrefix": {
+      "type": "string",
+      "defaultValue": "[uniqueString(resourceGroup().id)]",
+      "metadata": {
+        "description": "Resource name prefix."
+      }
+    },
+    "adminUsername": {
+      "type": "string",
+      "metadata": {
+        "description": "Admin username for the virtual machine."
+      }
+    },
+    //Need to change with Windows VM configuration
+    "adminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Admin password for the vm"
+      }
+    },
+    "OSVersion": {
+      "type": "string",
+      "defaultValue": "2022-datacenter-azure-edition",
+      "allowedValues": [
+        "2016-datacenter-gensecond",
+        "2016-datacenter-server-core-g2",
+        "2016-datacenter-server-core-smalldisk-g2",
+        "2016-datacenter-smalldisk-g2",
+        "2016-datacenter-with-containers-g2",
+        "2016-datacenter-zhcn-g2",
+        "2019-datacenter-core-g2",
+        "2019-datacenter-core-smalldisk-g2",
+        "2019-datacenter-core-with-containers-g2",
+        "2019-datacenter-core-with-containers-smalldisk-g2",
+        "2019-datacenter-gensecond",
+        "2019-datacenter-smalldisk-g2",
+        "2019-datacenter-with-containers-g2",
+        "2019-datacenter-with-containers-smalldisk-g2",
+        "2019-datacenter-zhcn-g2",
+        "2022-datacenter-azure-edition",
+        "2022-datacenter-azure-edition-core",
+        "2022-datacenter-azure-edition-core-smalldisk",
+        "2022-datacenter-azure-edition-smalldisk",
+        "2022-datacenter-core-g2",
+        "2022-datacenter-core-smalldisk-g2",
+        "2022-datacenter-g2",
+        "2022-datacenter-smalldisk-g2"
+      ],
+      "metadata": {
+        "description": "The Windows version for the VM. This will pick a fully patched image of this given Windows version."
+      }
+    },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2s_v5",
+      "metadata": {
+        "description": "Virtual machine size"
+      }
+    }
+  },
+
+  //Need to change with Windows VM configuration
+  "variables": {
+    "imagePublisher": "MicrosoftWindowsServer",
+    "imageOffer": "WindowsServer"
+  },
+
+
+  "resources": [
+    {
+        //Hub Vnet
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2024-05-01",
+      "name": "[format('vnet-hub-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.0.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "subnet1",
+            "properties": {
+              "addressPrefix": "10.0.0.0/24"
+            }
+          },
+          {
+            "name": "AzureFirewallSubnet",
+            "properties": {
+              "addressPrefix": "10.0.1.64/26",
+              "natGateway": {
+                "id": "[resourceId('Microsoft.Network/natGateways', format('nat-gateway-{0}', parameters('resourcePrefix')))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/natGateways', format('nat-gateway-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //Spoke1 Vnet
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2024-05-01",
+      "name": "[format('vnet-spoke1-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.1.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "subnet-spoke1",
+            "properties": {
+              "addressPrefix": "10.1.0.0/24",
+              "routeTable": {
+                "id": "[resourceId('Microsoft.Network/routeTables', format('rt-spoke1-{0}', parameters('resourcePrefix')))]"
+              },
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', format('vm1-nsg-{0}', parameters('resourcePrefix')))]"
+                }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', format('vm1-nsg-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/routeTables', format('rt-spoke1-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //Spoke2 VNet
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2024-05-01",
+      "name": "[format('vnet-spoke2-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.2.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "subnet-spoke2",
+            "properties": {
+              "addressPrefix": "10.2.0.0/24",
+              "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', format('vm2-nsg-{0}', parameters('resourcePrefix')))]"
+                }
+            }
+          }
+        ]
+        
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', format('vm2-nsg-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //Bastion Host in Hub
+    {
+      "type": "Microsoft.Network/bastionHosts",
+      "apiVersion": "2024-01-01",
+      "name": "[format('bastion-hub-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Developer"
+      },
+      "properties": {
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //Firewall Public IP
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2024-05-01",
+      "name": "[format('fw-pip-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Static"
+      }
+    },
+
+    //Firewall Policies & Rules
+    {
+      "type": "Microsoft.Network/firewallPolicies",
+      "apiVersion": "2024-05-01",
+      "name": "[format('fw-policy-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.Network/firewallPolicies/ruleCollectionGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/{1}', format('fw-policy-{0}', parameters('resourcePrefix')), 'DefaultNetworkRuleCollectionGroup')]",
+      "properties": {
+        "priority": 200,
+        "ruleCollections": [
+          {
+            "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
+            "name": "spoke1-to-spoke2",
+            "priority": 100,
+            "action": {
+              "type": "Allow"
+            },
+            "rules": [
+              {
+                "ruleType": "NetworkRule",
+                "name": "allow-spoke1tospoke2",
+                "ipProtocols": [
+                  "TCP"
+                ],
+                "sourceAddresses": [
+                  "10.1.0.0/24"
+                ],
+                "destinationAddresses": [
+                  "10.2.0.0/24"
+                ],
+                "destinationPorts": [
+                  "*"
+                ]
+              },
+              {
+                "ruleType": "NetworkRule",
+                "name": "allow-web",
+                "ipProtocols": [
+                  "TCP"
+                ],
+                "sourceAddresses": [
+                  "10.1.0.0/24"
+                ],
+                "destinationAddresses": [
+                  "*"
+                ],
+                "destinationPorts": [
+                  "80",
+                  "443"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/firewallPolicies', format('fw-policy-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/azureFirewalls",
+      "apiVersion": "2024-05-01",
+      "name": "[format('firewall-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "AZFW_VNet",
+          "tier": "Standard"
+        },
+        "ipConfigurations": [
+          {
+            "name": "AzureFirewallIpConfiguration",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', format('fw-pip-{0}', parameters('resourcePrefix')))]"
+              },
+              "subnet": {
+                "id": "[format('{0}/subnets/AzureFirewallSubnet', resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix'))))]"
+              }
+            }
+          }
+        ],
+        "firewallPolicy": {
+          "id": "[resourceId('Microsoft.Network/firewallPolicies', format('fw-policy-{0}', parameters('resourcePrefix')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', format('fw-pip-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/firewallPolicies', format('fw-policy-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/firewallPolicies/ruleCollectionGroups', format('fw-policy-{0}', parameters('resourcePrefix')), 'DefaultNetworkRuleCollectionGroup')]"
+      ]
+    },
+
+    //NAT Public IP & NAT Configuration
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2024-05-01",
+      "name": "[format('nat-pip-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Static"
+      }
+    },
+    {
+      "type": "Microsoft.Network/natGateways",
+      "apiVersion": "2024-05-01",
+      "name": "[format('nat-gateway-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "idleTimeoutInMinutes": 4,
+        "publicIpAddresses": [
+          {
+            "id": "[resourceId('Microsoft.Network/publicIPAddresses', format('nat-pip-{0}', parameters('resourcePrefix')))]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', format('nat-pip-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //Hub to Spoke1 Peerings
+    {
+      "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/{1}', format('vnet-hub-{0}', parameters('resourcePrefix')), 'vnet-spoke1')]",
+      "properties": {
+        "allowVirtualNetworkAccess": true,
+        "allowForwardedTraffic": true,
+        "allowGatewayTransit": false,
+        "useRemoteGateways": false,
+        "remoteVirtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke1-{0}', parameters('resourcePrefix')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke1-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/{1}', format('vnet-spoke1-{0}', parameters('resourcePrefix')), 'spoke1-hub')]",
+      "properties": {
+        "allowVirtualNetworkAccess": true,
+        "allowForwardedTraffic": true,
+        "allowGatewayTransit": false,
+        "useRemoteGateways": false,
+        "remoteVirtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke1-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //Hub to Spoke2 Peerings
+    {
+      "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/{1}', format('vnet-hub-{0}', parameters('resourcePrefix')), 'vnet-spoke2')]",
+      "properties": {
+        "allowVirtualNetworkAccess": true,
+        "allowForwardedTraffic": true,
+        "allowGatewayTransit": false,
+        "useRemoteGateways": false,
+        "remoteVirtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke2-{0}', parameters('resourcePrefix')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke2-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/{1}', format('vnet-spoke2-{0}', parameters('resourcePrefix')), 'spoke2-hub')]",
+      "properties": {
+        "allowVirtualNetworkAccess": true,
+        "allowForwardedTraffic": true,
+        "allowGatewayTransit": false,
+        "useRemoteGateways": false,
+        "remoteVirtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke2-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //Route table
+    {
+      "type": "Microsoft.Network/routeTables",
+      "apiVersion": "2024-05-01",
+      "name": "[format('rt-spoke1-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "disableBgpRoutePropagation": true,
+        "routes": [
+          {
+            "name": "rt-to-hub",
+            "properties": {
+              "addressPrefix": "10.2.0.0/24",
+              "nextHopType": "VirtualAppliance",
+              "nextHopIpAddress": "[reference(resourceId('Microsoft.Network/azureFirewalls', format('firewall-{0}', parameters('resourcePrefix'))), '2024-05-01').ipConfigurations[0].properties.privateIPAddress]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/azureFirewalls', format('firewall-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //nsg for vm1-spoke1
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[format('vm1-nsg-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "default-allow-3389",
+            "properties": {
+              "priority": 1000,
+              "access": "Allow",
+              "direction": "Inbound",
+              "destinationPortRange": "3389",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*"
+            }
+          }
+        ]
+      }
+    },
+
+    //Deleted NIC
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2024-05-01",
+      "name": "[format('nic-vm1-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[format('{0}/subnets/subnet-spoke1', resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke1-{0}', parameters('resourcePrefix'))))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke1-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //vm1 need to change
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2024-07-01",
+      "name": "[format('vm1-spoke1-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "osProfile": {
+          "computerName": "vm1-spoke1",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('imagePublisher')]",
+            "offer": "[variables('imageOffer')]",
+            "sku": "[parameters('OSVersion')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "createOption": "FromImage",
+            "managedDisk": {
+              "storageAccountType": "StandardSSD_LRS"
+            }
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', format('nic-vm1-{0}', parameters('resourcePrefix')))]"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', format('nic-vm1-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //nsg for vm2-spoke2
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[format('vm2-nsg-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "default-allow-3389",
+            "properties": {
+              "priority": 1000,
+              "access": "Allow",
+              "direction": "Inbound",
+              "destinationPortRange": "3389",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*"
+            }
+          }
+        ]
+      }
+    },
+
+    //Deleted NIC
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2024-05-01",
+      "name": "[format('nic-vm2-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig2",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[format('{0}/subnets/subnet-spoke2', resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke2-{0}', parameters('resourcePrefix'))))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke2-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
+    //vm2 need to change
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2024-07-01",
+      "name": "[format('vm2-spoke2-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "osProfile": {
+          "computerName": "vm2-spoke2",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('imagePublisher')]",
+            "offer": "[variables('imageOffer')]",
+            "sku": "[parameters('OSVersion')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "createOption": "FromImage",
+            "managedDisk": {
+              "storageAccountType": "StandardSSD_LRS"
+            }
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', format('nic-vm2-{0}', parameters('resourcePrefix')))]"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', format('nic-vm2-{0}', parameters('resourcePrefix')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "hubVnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]"
+    },
+    "spoke1VnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke1-{0}', parameters('resourcePrefix')))]"
+    },
+    "spoke2VnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-spoke2-{0}', parameters('resourcePrefix')))]"
+    },
+    "firewallPrivateIP": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/azureFirewalls', format('firewall-{0}', parameters('resourcePrefix'))), '2024-05-01').ipConfigurations[0].properties.privateIPAddress]"
+    },
+    "natGatewayPublicIP": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', format('nat-pip-{0}', parameters('resourcePrefix'))), '2024-05-01').ipAddress]"
+    },
+    "vm1PrivateIP": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/networkInterfaces', format('nic-vm1-{0}', parameters('resourcePrefix'))), '2024-05-01').ipConfigurations[0].properties.privateIPAddress]"
+    },
+    "vm2PrivateIP": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/networkInterfaces', format('nic-vm2-{0}', parameters('resourcePrefix'))), '2024-05-01').ipConfigurations[0].properties.privateIPAddress]"
+    },
+    "bastionFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/bastionHosts', format('bastion-hub-{0}', parameters('resourcePrefix'))), '2024-01-01').dnsName]"
+    },
+    "resourceGroupName": {
+      "type": "string",
+      "value": "[resourceGroup().name]"
+    },
+    "vm1Name": {
+      "type": "string",
+      "value": "[format('vm1-spoke1-{0}', parameters('resourcePrefix'))]"
+    },
+    "vm2Name": {
+      "type": "string",
+      "value": "[format('vm2-spoke2-{0}', parameters('resourcePrefix'))]"
+    }
+  }
+}
