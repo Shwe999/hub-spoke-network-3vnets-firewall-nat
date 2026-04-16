@@ -22,7 +22,6 @@
         "description": "Admin username for the virtual machine."
       }
     },
-    //Need to change with Windows VM configuration
     "adminPassword": {
       "type": "securestring",
       "metadata": {
@@ -70,7 +69,6 @@
     }
   },
 
-  //Need to change with Windows VM configuration
   "variables": {
     "imagePublisher": "MicrosoftWindowsServer",
     "imageOffer": "WindowsServer"
@@ -467,7 +465,7 @@
       }
     },
 
-    //Deleted NIC
+    // NIC for vm1
     {
       "type": "Microsoft.Network/networkInterfaces",
       "apiVersion": "2024-05-01",
@@ -491,7 +489,7 @@
       ]
     },
 
-    //vm1 need to change
+    //vm1 in spoke1 vnet
     {
       "type": "Microsoft.Compute/virtualMachines",
       "apiVersion": "2024-07-01",
@@ -558,7 +556,7 @@
       }
     },
 
-    //Deleted NIC
+    // NIC for spoke2
     {
       "type": "Microsoft.Network/networkInterfaces",
       "apiVersion": "2024-05-01",
@@ -582,7 +580,7 @@
       ]
     },
 
-    //vm2 need to change
+    //vm2 for spoke2 vnet
     {
       "type": "Microsoft.Compute/virtualMachines",
       "apiVersion": "2024-07-01",
