@@ -30,7 +30,7 @@
     },
     "OSVersion": {
       "type": "string",
-      "defaultValue": "2022-datacenter-azure-edition",
+      "defaultValue": "2025-datacenter-azure-edition",
       "allowedValues": [
         "2016-datacenter-gensecond",
         "2016-datacenter-server-core-g2",
@@ -54,7 +54,8 @@
         "2022-datacenter-core-g2",
         "2022-datacenter-core-smalldisk-g2",
         "2022-datacenter-g2",
-        "2022-datacenter-smalldisk-g2"
+        "2022-datacenter-smalldisk-g2",
+        "2025-datacenter-azure-edition"
       ],
       "metadata": {
         "description": "The Windows version for the VM. This will pick a fully patched image of this given Windows version."
@@ -62,7 +63,7 @@
     },
     "vmSize": {
       "type": "string",
-      "defaultValue": "Standard_D2s_v5",
+      "defaultValue": "Standard_B2ats_v2",
       "metadata": {
         "description": "Virtual machine size"
       }
@@ -77,7 +78,7 @@
 
   "resources": [
     {
-        //Hub Vnet
+
       "type": "Microsoft.Network/virtualNetworks",
       "apiVersion": "2024-05-01",
       "name": "[format('vnet-hub-{0}', parameters('resourcePrefix'))]",
@@ -103,6 +104,12 @@
                 "id": "[resourceId('Microsoft.Network/natGateways', format('nat-gateway-{0}', parameters('resourcePrefix')))]"
               }
             }
+          },
+          {
+            "name": "AzureBastionSubnet",
+            "properties": {
+              "addressPrefix": "10.0.2.0/26"
+            }
           }
         ]
       },
@@ -111,7 +118,7 @@
       ]
     },
 
-    //Spoke1 Vnet
+
     {
       "type": "Microsoft.Network/virtualNetworks",
       "apiVersion": "2024-05-01",
@@ -144,7 +151,7 @@
       ]
     },
 
-    //Spoke2 VNet
+
     {
       "type": "Microsoft.Network/virtualNetworks",
       "apiVersion": "2024-05-01",
@@ -161,6 +168,9 @@
             "name": "subnet-spoke2",
             "properties": {
               "addressPrefix": "10.2.0.0/24",
+              "routeTable": {
+                "id": "[resourceId('Microsoft.Network/routeTables', format('rt-spoke2-{0}', parameters('resourcePrefix')))]"
+              },
               "networkSecurityGroup": {
                     "id": "[resourceId('Microsoft.Network/networkSecurityGroups', format('vm2-nsg-{0}', parameters('resourcePrefix')))]"
                 }
@@ -174,26 +184,46 @@
       ]
     },
 
-    //Bastion Host in Hub
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2024-01-01",
+      "name": "[format('bastion-pip-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "publicIPAllocationMethod": "Static"
+      },
+      "sku": {
+        "name": "Standard"
+      }
+    },
+
     {
       "type": "Microsoft.Network/bastionHosts",
       "apiVersion": "2024-01-01",
       "name": "[format('bastion-hub-{0}', parameters('resourcePrefix'))]",
       "location": "[parameters('location')]",
-      "sku": {
-        "name": "Developer"
-      },
       "properties": {
-        "virtualNetwork": {
-          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]"
-        }
+        "ipConfigurations": [
+          {
+            "properties": {
+              "subnet": {
+                "id": "[format('{0}/subnets/AzureBastionSubnet', resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}',parameters('resourcePrefix'))))]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', format('bastion-pip-{0}', parameters('resourcePrefix')))]"
+              },
+              "privateIPAllocationMethod": "Dynamic"
+            },
+            "name": "ipconfig1"
+          }
+        ]
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]"
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-hub-{0}', parameters('resourcePrefix')))]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', format('bastion-pip-{0}', parameters('resourcePrefix')))]"
       ]
     },
 
-    //Firewall Public IP
     {
       "type": "Microsoft.Network/publicIPAddresses",
       "apiVersion": "2024-05-01",
@@ -207,7 +237,6 @@
       }
     },
 
-    //Firewall Policies & Rules
     {
       "type": "Microsoft.Network/firewallPolicies",
       "apiVersion": "2024-05-01",
@@ -245,10 +274,46 @@
                 "destinationPorts": [
                   "*"
                 ]
-              },
+              }
+            ]
+          },
+          {
+            "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
+            "name": "spoke2-to-spoke1",
+            "priority": 101,
+            "action": {
+              "type": "Allow"
+            },
+            "rules": [
               {
                 "ruleType": "NetworkRule",
-                "name": "allow-web",
+                "name": "allow-spoke2tospoke1",
+                "ipProtocols": [
+                  "TCP"
+                ],
+                "sourceAddresses": [
+                  "10.2.0.0/24"
+                ],
+                "destinationAddresses": [
+                  "10.1.0.0/24"
+                ],
+                "destinationPorts": [
+                  "*"
+                ]
+              }
+            ]
+          },
+          {
+            "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
+            "name": "spoke1-to-internet",
+            "priority": 110,
+            "action": {
+              "type": "Allow"
+            },
+            "rules": [
+              {
+                "ruleType": "NetworkRule",
+                "name": "allow-spoke1tointernet",
                 "ipProtocols": [
                   "TCP"
                 ],
@@ -256,11 +321,36 @@
                   "10.1.0.0/24"
                 ],
                 "destinationAddresses": [
-                  "*"
+                  "0.0.0.0/0"
                 ],
                 "destinationPorts": [
-                  "80",
-                  "443"
+                  "*"
+                ]
+              }
+            ]
+          },
+          {
+            "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
+            "name": "spoke2-to-internet",
+            "priority": 111,
+            "action": {
+              "type": "Allow"
+            },
+            "rules": [
+              {
+                "ruleType": "NetworkRule",
+                "name": "allow-spoke2tointernet",
+                "ipProtocols": [
+                  "TCP"
+                ],
+                "sourceAddresses": [
+                  "10.2.0.0/24"
+                ],
+                "destinationAddresses": [
+                  "0.0.0.0/0"
+                ],
+                "destinationPorts": [
+                  "*"
                 ]
               }
             ]
@@ -306,7 +396,6 @@
       ]
     },
 
-    //NAT Public IP & NAT Configuration
     {
       "type": "Microsoft.Network/publicIPAddresses",
       "apiVersion": "2024-05-01",
@@ -340,11 +429,10 @@
       ]
     },
 
-    //Hub to Spoke1 Peerings
     {
       "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
       "apiVersion": "2024-05-01",
-      "name": "[format('{0}/{1}', format('vnet-hub-{0}', parameters('resourcePrefix')), 'vnet-spoke1')]",
+      "name": "[format('{0}/{1}', format('vnet-hub-{0}', parameters('resourcePrefix')), 'hub-spoke1')]",
       "properties": {
         "allowVirtualNetworkAccess": true,
         "allowForwardedTraffic": true,
@@ -378,11 +466,10 @@
       ]
     },
 
-    //Hub to Spoke2 Peerings
     {
       "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
       "apiVersion": "2024-05-01",
-      "name": "[format('{0}/{1}', format('vnet-hub-{0}', parameters('resourcePrefix')), 'vnet-spoke2')]",
+      "name": "[format('{0}/{1}', format('vnet-hub-{0}', parameters('resourcePrefix')), 'hub-spoke2')]",
       "properties": {
         "allowVirtualNetworkAccess": true,
         "allowForwardedTraffic": true,
@@ -416,7 +503,6 @@
       ]
     },
 
-    //Route table
     {
       "type": "Microsoft.Network/routeTables",
       "apiVersion": "2024-05-01",
@@ -426,9 +512,17 @@
         "disableBgpRoutePropagation": true,
         "routes": [
           {
-            "name": "rt-to-hub",
+            "name": "rt-spoke1-spoke2",
             "properties": {
               "addressPrefix": "10.2.0.0/24",
+              "nextHopType": "VirtualAppliance",
+              "nextHopIpAddress": "[reference(resourceId('Microsoft.Network/azureFirewalls', format('firewall-{0}', parameters('resourcePrefix'))), '2024-05-01').ipConfigurations[0].properties.privateIPAddress]"
+            }
+          },
+          {
+            "name": "rt-spoke1-internet",
+            "properties": {
+              "addressPrefix": "0.0.0.0/0",
               "nextHopType": "VirtualAppliance",
               "nextHopIpAddress": "[reference(resourceId('Microsoft.Network/azureFirewalls', format('firewall-{0}', parameters('resourcePrefix'))), '2024-05-01').ipConfigurations[0].properties.privateIPAddress]"
             }
@@ -440,7 +534,37 @@
       ]
     },
 
-    //nsg for vm1-spoke1
+    {
+      "type": "Microsoft.Network/routeTables",
+      "apiVersion": "2024-05-01",
+      "name": "[format('rt-spoke2-{0}', parameters('resourcePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "disableBgpRoutePropagation": true,
+        "routes": [
+          {
+            "name": "rt-spoke2-spoke1",
+            "properties": {
+              "addressPrefix": "10.1.0.0/24",
+              "nextHopType": "VirtualAppliance",
+              "nextHopIpAddress": "[reference(resourceId('Microsoft.Network/azureFirewalls', format('firewall-{0}', parameters('resourcePrefix'))), '2024-05-01').ipConfigurations[0].properties.privateIPAddress]"
+            }
+          },
+          {
+            "name": "rt-spoke2-internet",
+            "properties": {
+              "addressPrefix": "0.0.0.0/0",
+              "nextHopType": "VirtualAppliance",
+              "nextHopIpAddress": "[reference(resourceId('Microsoft.Network/azureFirewalls', format('firewall-{0}', parameters('resourcePrefix'))), '2024-05-01').ipConfigurations[0].properties.privateIPAddress]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/azureFirewalls', format('firewall-{0}', parameters('resourcePrefix')))]"
+      ]
+    },
+
     {
       "type": "Microsoft.Network/networkSecurityGroups",
       "apiVersion": "2024-05-01",
@@ -449,9 +573,22 @@
       "properties": {
         "securityRules": [
           {
-            "name": "default-allow-3389",
+            "name": "AllowHTTP",
             "properties": {
-              "priority": 1000,
+              "priority": 100,
+              "access": "Allow",
+              "direction": "Inbound",
+              "destinationPortRange": "80",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*"
+            }
+          },
+          {
+            "name": "AllowRDP",
+            "properties": {
+              "priority": 110,
               "access": "Allow",
               "direction": "Inbound",
               "destinationPortRange": "3389",
@@ -465,7 +602,6 @@
       }
     },
 
-    // NIC for vm1
     {
       "type": "Microsoft.Network/networkInterfaces",
       "apiVersion": "2024-05-01",
@@ -489,7 +625,6 @@
       ]
     },
 
-    //vm1 in spoke1 vnet
     {
       "type": "Microsoft.Compute/virtualMachines",
       "apiVersion": "2024-07-01",
@@ -514,7 +649,7 @@
           "osDisk": {
             "createOption": "FromImage",
             "managedDisk": {
-              "storageAccountType": "StandardSSD_LRS"
+            "storageAccountType": "StandardSSD_LRS"
             }
           }
         },
@@ -531,7 +666,6 @@
       ]
     },
 
-    //nsg for vm2-spoke2
     {
       "type": "Microsoft.Network/networkSecurityGroups",
       "apiVersion": "2024-05-01",
@@ -540,9 +674,22 @@
       "properties": {
         "securityRules": [
           {
-            "name": "default-allow-3389",
+            "name": "AllowHTTP",
             "properties": {
-              "priority": 1000,
+              "priority": 100,
+              "access": "Allow",
+              "direction": "Inbound",
+              "destinationPortRange": "80",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*"
+            }
+          },
+          {
+            "name": "AllowRDP",
+            "properties": {
+              "priority": 110,
               "access": "Allow",
               "direction": "Inbound",
               "destinationPortRange": "3389",
@@ -556,7 +703,6 @@
       }
     },
 
-    // NIC for spoke2
     {
       "type": "Microsoft.Network/networkInterfaces",
       "apiVersion": "2024-05-01",
@@ -580,7 +726,6 @@
       ]
     },
 
-    //vm2 for spoke2 vnet
     {
       "type": "Microsoft.Compute/virtualMachines",
       "apiVersion": "2024-07-01",
