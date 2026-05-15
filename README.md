@@ -6,10 +6,10 @@ Products:
 Language: 
 - Json
 ---
-# Create a Hub with Firewall subnet, Bastion subnet and 2 spoke networks, each with VM, NSG and route table
+# Create a Hub with Firewall and Bastion services, and 2 spoke networks, each contains VM, NSG and route table
 # Overview & Deployed Resources
 ## Overview
-This template creates a centralized hub-and-spoke network design, ensuring a secure network connection between two spokes through a hub. The design implements a hub VNet containing Azure Firewall and Azure Bastion services, which is peered with two spoke VNets. Each spoke VNet has a Virtual Machine (VM) which can be connected via bastion without exposing public ip address, and a custome Route Table to route traffic between these spokes. Azure Firewall supports as a Virtual Appliance to forward that traffic which is configured with specific policies.
+This template creates a centralized hub-and-spoke network design, ensuring a secure network connection between two spokes through a hub. The design implements a hub VNet containing Azure Firewall and Azure Bastion services, which is peered with two spoke VNets. Each spoke VNet has a Virtual Machine (VM) which can be connected via bastion without exposing public ip address, and custom Route Tables to route traffic between these spokes. Azure Firewall supports as a Virtual Appliance to forward that traffic which is configured with specific policies.
 
 ## Resources
 ### Microsoft.Network
@@ -23,7 +23,7 @@ This template creates a centralized hub-and-spoke network design, ensuring a sec
 - firewallPolicies - Firewall Policy with network rules for spoke-to-spoke and spoke-to-internet traffic
 - azureFirewalls - Azure Firewall for network security and traffic filtering
 - natGateways - NAT gateway for outbound network connectivity
-- routeTables - Custom Route tables for spoke to spoke and spoke to internet routes via Azure Firewall
+- routeTables - Custom Route tables for spoke to spoke and spoke to internet routes
 - networkSecurityGroups - NSGs for VMs in spoke networks
 - networkInterfaces - Network Interface for VMs
 
