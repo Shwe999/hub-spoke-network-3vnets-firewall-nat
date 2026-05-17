@@ -29,3 +29,5 @@ This template creates a centralized hub-and-spoke network design, ensuring a sec
 
  ### Microsoft.Compute
  - virtualMachines - Windows Server 2025 Datacenter VMs in each spoke network
+
+`Tags: Virtual Network, VNet, Virtual Network Peering, Azure Firewall, Firewall Policies Azure Bastion, Route Table, NSGs, Network Interface, Virtual Machine, VM, NAT Gateway`
